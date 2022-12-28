@@ -4,7 +4,11 @@ import static io.smallrye.reactive.messaging.providers.helpers.CDIUtils.getSorte
 import static io.smallrye.reactive.messaging.providers.i18n.ProviderExceptions.ex;
 import static io.smallrye.reactive.messaging.providers.i18n.ProviderLogging.log;
 
-import java.util.*;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import javax.enterprise.context.ApplicationScoped;
 import javax.enterprise.inject.Any;
@@ -13,7 +17,7 @@ import javax.inject.Inject;
 
 import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.reactive.messaging.Message;
-import org.eclipse.microprofile.reactive.messaging.spi.*;
+import org.eclipse.microprofile.reactive.messaging.spi.ConnectorFactory;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 
@@ -30,6 +34,7 @@ import io.smallrye.reactive.messaging.providers.helpers.MultiUtils;
  */
 @ApplicationScoped
 public class ConfiguredChannelFactory implements ChannelRegistar {
+    private static final Set<String> WELL_KNOWN_ATTRIBUTES = Set.of("merge", "broadcast", "retries", "enabled", "connector");
 
     protected final Config config;
     protected final ChannelRegistry registry;
@@ -73,7 +78,7 @@ public class ConfiguredChannelFactory implements ChannelRegistar {
     static Map<String, ConnectorConfig> extractConfigurationFor(String prefix, Config root) {
         Iterable<String> names = root.getPropertyNames();
         Map<String, ConnectorConfig> configs = new HashMap<>();
-        names.forEach(key -> {
+        for (String key : names) {
             // $prefix$name.key=value (the prefix ends with a .)
             if (key.startsWith(prefix)) {
                 // Extract the name
@@ -83,11 +88,28 @@ public class ConfiguredChannelFactory implements ChannelRegistar {
                 } else if (name.contains(".")) { // We must remove the part after the first dot
                     String tmp = name;
                     name = tmp.substring(0, tmp.indexOf('.'));
+                    // make sure this is not a trimmed name from an environment variable
+                    if (!hasAnUsualAttributeSet(name, names)) {
+                        continue;
+                    }
                 }
                 configs.put(name, new ConnectorConfig(prefix, root, name));
             }
-        });
+        }
         return configs;
+    }
+
+    private static boolean hasAnUsualAttributeSet(String potentialChannelName, Iterable<String> configPropertyNames) {
+        Set<String> usualConfigPropertyNameEnds = WELL_KNOWN_ATTRIBUTES.stream()
+                .map(attr -> potentialChannelName + "." + attr).collect(Collectors.toSet());
+        for (String configPropertyName : configPropertyNames) {
+            for (String usualConfigPropertyNameEnd : usualConfigPropertyNameEnds) {
+                if (configPropertyName.endsWith(usualConfigPropertyNameEnd)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     @Override
